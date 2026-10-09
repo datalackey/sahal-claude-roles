@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Re-establish hardlinks from ~/.claude/ to the versioned source files after
+# any git operation that replaces tracked files.
+#
+# WHY THIS EXISTS:
+# Git never modifies files in place. On checkout/merge/rebase it writes new
+# content to a temp file and renames it over the original (rename(2)). Each
+# rename produces a new inode. Any hardlink pointing at the old inode is
+# silently orphaned — it keeps serving the pre-update content forever.
+#
+# This hook runs ln -f (force-replace) for each config file immediately after
+# git finishes, atomically replacing the destination with a new hardlink to the
+# current source inode. The result: ~/.claude/ is always in sync with HEAD.
+#
+# INSTALLED AS (by setup-claude-configs.sh --host-mode):
+#   .git/hooks/post-merge     fires after: git pull, git merge
+#   .git/hooks/post-checkout  fires after: git checkout, git switch
+#   .git/hooks/post-rewrite   fires after: git rebase, git commit --amend
+
+# Kept in sync with the file set in setup-claude-configs.sh --host-mode by
+# hand — see DECISIONS.md §13 for why this drifted once already (this hook
+# still relinked a deleted LLM-directives.txt for weeks after the LLM/COMMON +
+# LLM/roles migration, silently skipping it via the `[ -f "$src" ]` guard, and
+# never learned about the LLM/ tree or rules/ that replaced it).
+
+GIT_ROOT="$(git rev-parse --show-toplevel)"
+CLAUDE_CONFIGS="$GIT_ROOT/devenv/claude/claude-config-files"
+
+relink() {
+  local src="$1" dst="$2"
+  if [ -f "$src" ]; then
+    mkdir -p "$(dirname "$dst")"
+    ln -f "$src" "$dst" && echo "🔗 $dst" || echo "⚠️  $dst — hardlink failed (skipping)"
+  fi
+}
+
+relink_tree() {
+  local srcdir="$1" dstdir="$2"
+  [ -d "$srcdir" ] || return 0
+  while IFS= read -r -d '' src; do
+    rel="${src#"$srcdir"/}"
+    relink "$src" "$dstdir/$rel"
+  done < <(find "$srcdir" -type f -print0)
+}
+
+relink "$CLAUDE_CONFIGS/CLAUDE.md"            "$HOME/.claude/CLAUDE.md"
+relink "$CLAUDE_CONFIGS/settings.json"        "$HOME/.claude/settings.json"
+relink "$CLAUDE_CONFIGS/session-start.sh"     "$HOME/.claude/session-start.sh"
+relink "$CLAUDE_CONFIGS/generate-preamble.js" "$HOME/.claude/generate-preamble.js"
+relink_tree "$CLAUDE_CONFIGS/LLM"   "$HOME/.claude/LLM"
+relink_tree "$CLAUDE_CONFIGS/rules" "$HOME/.claude/rules"
+
+# Re-hardlinking settings.json above just replaced it with the plain versioned
+# copy, which has no statusLine — re-inject it so claude-hud survives every
+# git operation, not just a full setup-claude-configs.sh --host-mode run.
+"$GIT_ROOT/devenv/claude/wire-hud-statusline.sh"

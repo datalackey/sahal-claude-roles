@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Read"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(rm -fr *)",
+      "Bash(git reset --hard *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git clean -f *)",
+      "Bash(git checkout -- . *)",
+      "Bash(mkfs *)",
+      "Bash(dd if= *)"
+    ]
+  },
+  "model": "sonnet",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -qiE '(rm\\s+(-[a-zA-Z]*)?r[a-zA-Z]*f|rm\\s+(-[a-zA-Z]*)?f[a-zA-Z]*r|git\\s+reset\\s+--hard|git\\s+push\\s+.*--force|git\\s+push\\s+.*-f\\b|git\\s+clean\\s+-[a-zA-Z]*f|git\\s+checkout\\s+--\\s+\\.|drop\\s+database|drop\\s+table|truncate\\s+table|>\\s*/dev/sd|mkfs\\.|dd\\s+if=)' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Destructive command detected. This command could cause irreversible damage.\"}}' || echo '{\"continue\":true}'",
+            "timeout": 5,
+            "statusMessage": "Checking for destructive commands..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/session-start.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/run/current-system/sw/bin/node /home/chris/.claude/hud-wrapper.js"
+  },
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
+  "skipDangerousModePermissionPrompt": true
+}

@@ -1,0 +1,166 @@
+/mnt/etc/nixos/hardware-configuration.nix1) To perform set up of new laptop first do:
+     PARTITION FORMATTING (see below)
+2) Then run:
+    sudo nixos-generate-config --root /mnt
+            can ignore>> ERROR: not a btrfs filesystem: /mnt/boot
+                as long as you see:
+                    writing /mnt/etc/nixos/hardware-configuration.nix...
+                    writing /mnt/etc/nixos/configuration.nix...
+
+3) And then edit config file resulting from prior step:
+    /mnt/etc/nixos/hardware-configuration.nix 
+    Add:
+            fileSystems."/" = {
+              device = "/dev/disk/by-label/nixos-ssd";
+              fsType = "ext4";
+            };
+
+            fileSystems."/boot" = {
+              device = "/dev/disk/by-label/EFI_SSD";
+              fsType = "vfat";
+              options = [ "fmask=0022" "dmask=0022" ];
+            };
+4) Follow Secure note for setup of .ssh key for git repo, then pull nixos-config project
+
+5) need to fill in how to nixos-install (?)
+
+6) Post-install steps
+
+
+
+
+
+PARTITION FORMATTING
+
+nix-shell -p gptfdisk       #  make sure partitioning utility is installed
+
+########  setup disk partitions (SSD)
+
+export DISK="/dev/nvme0n1"
+
+# Zap all old partitioning info on SSD
+sudo sgdisk --zap-all "$DISK"
+
+# Create EFI (512M) and root (remainder) partitions with GPT labels
+sudo sgdisk -n 1:0:+512M -t 1:ef00 -c 1:"EFI_SSD" "$DISK"
+sudo sgdisk -n 2:0:0     -t 2:8300 -c 2:"rootfs-ssd" "$DISK"
+
+# Format partitions with filesystem labels
+sudo mkfs.vfat -F 32 -n EFI_SSD "${DISK}p1"
+sudo mkfs.ext4 -L nixos-ssd "${DISK}p2"
+
+# Mount with label-based device paths
+
+sudo mkdir -p /mnt
+sudo mount /dev/disk/by-label/nixos-ssd /mnt
+sudo mkdir -p /mnt/boot
+sudo mount /dev/disk/by-label/EFI_SSD /mnt/boot
+
+
+NVIDIA PRIME OFFLOAD VERIFICATION (after switching nouveau -> nvidia, commit 68ff03d)
+
+Run these after `sudo nixos-rebuild switch` + reboot into the new generation.
+
+1) Confirm nvidia driver loaded (was nouveau before):
+    nix-shell -p pciutils --run "lspci -k -s 01:00.0"
+    -> expect: Kernel driver in use: nvidia
+
+2) Confirm normal apps still use Intel by default:
+    nix-shell -p mesa-demos --run "glxinfo | grep 'OpenGL renderer'"
+    -> expect: Mesa Intel(R) HD Graphics 530
+
+3) Confirm nvidia-offload actually switches the renderer:
+    nix-shell -p mesa-demos --run "nvidia-offload glxinfo | grep 'OpenGL renderer'"
+    -> expect: NVIDIA Corporation / Quadro M4000M
+
+4) Confirm the GPU was actually engaged (not just claimed):
+    nvidia-smi
+    -> run while (or immediately after) step 3 is executing; the process
+       should appear in the Processes table. NVIDIA may power back down
+       within seconds, so check quickly.
+
+Steps 2 vs 3 side-by-side (same command, different renderer string) is the
+real proof the offload switch works.
+
+ROLLBACK if anything looks wrong (black screen, X fails to start, etc.):
+    sudo nixos-rebuild switch --rollback
+    sudo reboot
+Hard fallback if that doesn't even get you a working shell: at the
+systemd-boot menu, arrow-select the prior generation (was 39 before this
+change) instead of letting the new default boot, then Enter.
+
+CAVEAT found 2026-08-26: step 1 above (`lspci -k` showing "Kernel driver in
+use: nvidia") is NOT sufficient proof the GPU is functional. nvidia.ko can
+still bind the PCI device and satisfy that check while NVRM internally
+refuses to initialize an unsupported GPU (logs "NVRM: No NVIDIA GPU found"
+in dmesg) and silently no-ops. Always check dmesg for that line too.
+
+
+EXTERNAL MONITOR FIX: legacy_580 + reverseSync (2026-08-26, pending test)
+
+Symptom: after the nouveau->nvidia switch above, external HDMI/DP monitor
+plugged into the laptop's built-in port shows as `disconnected` in
+`xrandr --query`, even freshly plugged.
+
+Root cause (two parts, confirmed via dmesg on 2026-08-26):
+  1) `nvidiaPackages.stable` had moved to 595.71.05, which dropped Maxwell
+     (this laptop's Quadro M4000M / GM204) support. dmesg showed
+     "NVRM: No NVIDIA GPU found" -- nvidia.ko bound the PCI device but
+     never actually initialized it. See CAVEAT above.
+  2) The external DP/HDMI ports are wired directly to the NVIDIA GPU, not
+     Intel -- confirmed via the `HDA NVidia HDMI/DP` audio codec bound to
+     PCI 01:00.1 (the GPU's audio function) in dmesg. Plain PRIME offload
+     mode never drives physical outputs (it only feeds rendered frames
+     back to Intel), so even a working NVIDIA GPU wouldn't light up these
+     ports without reverse PRIME sync.
+
+Fix applied in configuration.nix (not yet rebuilt/tested as of writing):
+  - hardware.nvidia.package -> nvidiaPackages.legacy_580 (nixpkgs' current
+    LTSB branch, covers Maxwell-Volta)
+  - hardware.nvidia.prime.reverseSync.enable = true
+
+Known risk: reverseSync is marked experimental upstream. Reported bugs
+include X crashing on external-monitor unplug/replug, and possible issues
+surviving sleep/wake with an NVIDIA-driven external display attached. A
+runtime crash from this is NOT a broken NixOS generation -- just reboot,
+no need for `--rollback`. Rollback only applies if the new generation
+fails to produce a working session at all (black screen every boot, X
+won't start, login loop).
+
+CONFIRMED WORKING 2026-08-25: rebuilt + rebooted, external monitor detected
+(`xrandr --listproviders` shows `NVIDIA-G0`). Persisted through MATE's
+Displays app (see memory `project_nvidia_external_monitor_fix` for detail).
+
+SLEEP/WAKE REGRESSION found 2026-08-27 (separate from the above): after the
+nouveau->nvidia switch + reverseSync went live, laptop stopped waking from
+`systemctl suspend` -- disk light + fan active, screen stayed black. Root
+cause: `hardware.nvidia.powerManagement.enable` was not set. This is the
+flag NixOS/nvidia docs call out as needed for the proprietary driver to
+save/restore GPU state across suspend, and is specifically recommended
+whenever prime offload/reverseSync is in play. Also flipped
+`services.journald.storage` from `volatile` to `persistent` at the same
+time, since the first occurrence of this bug produced no forensic logs
+(hard-reboot wiped the volatile journal).
+
+Fix applied in configuration.nix:
+  hardware.nvidia.powerManagement.enable = true;   # NOT finegrained --
+                                                      # that's Turing+ only,
+                                                      # this GPU is Maxwell.
+  services.journald.storage = "persistent";
+
+CONFIRMED WORKING 2026-08-27: 3 `systemctl suspend` / wake cycles, all
+clean (`PM: suspend entry (deep)` / `PM: suspend exit` in dmesg, screen
+came back every time) -- 2 without the external monitor attached, 1 with
+it attached (the reverseSync path). No black screen, no `err..alert`
+journal entries tied to the resume.
+
+One unrelated cosmetic issue surfaced during testing: `mate-settings-daemon`
+segfaulted once (SIGSEGV in `libmatemixer-pulse.so:on_connection_server_info`)
+about 80s after a resume, almost certainly triggered by the NVIDIA HDA audio
+codec re-enabling on resume (`nvidia 0000:01:00.0: Enabling HDA controller`
+in dmesg after every cycle) racing with PulseAudio's device-change
+notification. MATE auto-respawns the daemon and Chris noticed no symptoms,
+so this is not being chased further -- noting it here in case it recurs
+and someone goes looking for a pattern.
+
+

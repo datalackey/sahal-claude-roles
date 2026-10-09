@@ -1,0 +1,14 @@
+  # Reusable Bitwarden session helper for any project's .envrc.
+  # Loads a cached BW_SESSION if one exists -- pure file read, no `bw`
+  # call, no validation. Callers are responsible for detecting an
+  # invalid/expired session and re-unlocking (see infra/cloud/do/.envrc
+  # in qwiki for the retry-once pattern this is meant to pair with).
+  bw_session() {
+    local cache="$HOME/.cache/bw_session"
+    if [ -f "$cache" ]; then
+      export BW_SESSION="$(cat "$cache")"
+    fi
+  }
+  
+
+

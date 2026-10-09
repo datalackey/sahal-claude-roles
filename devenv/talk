@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NERD_DIR="$HOME/nerd-dictation"
+VENV_DIR="$HOME/.local/venvs/nerd"
+
+# --- 1) Ensure venv exists & activate ---
+if [[ ! -x "$VENV_DIR/bin/python3" ]]; then
+  echo "❌ venv missing at $VENV_DIR"
+  echo "   Create it:  python3 -m venv \"$VENV_DIR\" && source \"$VENV_DIR/bin/activate\" && pip install --upgrade pip vosk"
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$VENV_DIR/bin/activate"
+
+# --- 2) Ensure libstdc++.so.6 is discoverable (needed by Vosk's libvosk.so) ---
+GCC_LIB="$(gcc -print-file-name=libstdc++.so.6 || true)"
+if [[ "$GCC_LIB" == "libstdc++.so.6" || -z "$GCC_LIB" || ! -f "$GCC_LIB" ]]; then
+  GCC_LIB="$(find /nix/store -path '*/lib/libstdc++.so.6' -print -quit 2>/dev/null || true)"
+fi
+if [[ -z "$GCC_LIB" || ! -f "$GCC_LIB" ]]; then
+  echo "❌ Couldn't locate libstdc++.so.6. Install gcc runtime in your systemPackages."
+  echo "   In configuration.nix, ensure:  environment.systemPackages = with pkgs; [ gcc stdenv.cc.cc.lib ];"
+  exit 1
+fi
+GCC_LIB_DIR="$(dirname "$GCC_LIB")"
+export LD_LIBRARY_PATH="$GCC_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+if [[ -d /etc/sane-libs && ":$LD_LIBRARY_PATH:" != *":/etc/sane-libs:"* ]]; then
+  export LD_LIBRARY_PATH="/etc/sane-libs:$LD_LIBRARY_PATH"
+fi
+
+# --- 3) Preflight: confirm 'vosk' is importable and libvosk.so resolves ---
+python3 - <<'PY'
+import importlib.util, sys
+sys.exit(0 if importlib.util.find_spec("vosk") else 1)
+PY
+
+LIBVOSK="$VENV_DIR/lib/python3.11/site-packages/vosk/libvosk.so"
+if [[ -f "$LIBVOSK" ]]; then
+  if ldd "$LIBVOSK" 2>/dev/null | grep -q 'not found'; then
+    echo "❌ Dependencies missing for $LIBVOSK"
+    ldd "$LIBVOSK" | sed 's/^/   /'
+    echo "   LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+    exit 1
+  fi
+fi
+
+# --- 4) Run nerd-dictation ---
+exec python3 "$NERD_DIR/nerd-dictation" "$@"
+

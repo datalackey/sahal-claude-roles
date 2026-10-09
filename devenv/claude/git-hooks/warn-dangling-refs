@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Warn (non-blocking) when a commit deletes or renames a tracked file whose
+# exact path is still referenced elsewhere in the repo.
+#
+# WHY THIS EXISTS: see DECISIONS.md §13. Every staleness bug found in this
+# repo's history followed the same shape — a file was deleted or renamed, and
+# a sibling script or doc kept referencing the old path, with nothing ever
+# re-checking it (generate-preamble.js reading a deleted LLM-directives.txt,
+# README.md describing a mount that no longer exists, this directory's own
+# sync-claude-configs hook relinking a file that was gone). This surfaces
+# that class of bug at the moment of highest leverage — the commit that
+# causes it — while full context is still in the author's head.
+#
+# NON-BLOCKING BY DESIGN: DECISIONS.md-style history docs legitimately keep
+# referencing deleted paths forever, describing what used to exist (e.g. this
+# repo's own DECISIONS.md mentions LLM-directives.txt many times, on purpose).
+# A hard block would fight that pattern and train people to reach for
+# --no-verify. This only warns; you judge whether a hit is a real dangling
+# reference or an intentional historical mention.
+#
+# SCOPE: matches on exact relative paths, not bare filenames, so generic
+# names (settings.json, DEV.md) don't false-positive against unrelated files
+# elsewhere in the repo.
+#
+# INSTALLED AS (by setup-claude-configs.sh --host-mode):
+#   .git/hooks/pre-commit
+
+GIT_ROOT="$(git rev-parse --show-toplevel)"
+cd "$GIT_ROOT" || exit 0
+
+# Old-side path of anything staged as deleted or renamed-away in this commit.
+mapfile -t GONE < <(git diff --cached --name-status -M --diff-filter=DR \
+  | awk '{print $2}')
+
+[ ${#GONE[@]} -eq 0 ] && exit 0
+
+FOUND=0
+for path in "${GONE[@]}"; do
+  hits="$(git grep -l --fixed-strings -- "$path" 2>/dev/null || true)"
+  if [ -n "$hits" ]; then
+    FOUND=1
+    echo "⚠️  '$path' is being deleted/renamed but is still referenced in:"
+    echo "$hits" | sed 's/^/     /'
+  fi
+done
+
+if [ "$FOUND" -eq 1 ]; then
+  echo
+  echo "   (warning only — commit is not blocked. Intentional historical"
+  echo "   references, e.g. in a DECISIONS.md-style doc, are fine to ignore.)"
+fi
+
+exit 0

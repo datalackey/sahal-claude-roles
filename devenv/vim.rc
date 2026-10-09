@@ -1,0 +1,199 @@
+set visualbell
+colorscheme ron
+set clipboard=unnamedplus
+
+
+
+set softtabstop=4
+set expandtab
+set sw=4
+
+
+" create a back of all files we edit:   /tmp/<file>~
+set backup
+set backupdir=/tmp
+set dir=/tmp
+
+
+" :doc  define '-' as compound multi-key cmd start key
+let mapleader = "-"
+
+
+" :doc  -pa  to inject a visual mode (^B) selected block into current cursor with replacement
+vnoremap <leader>p "_dP
+
+" :doc  map ^A to  Select All (like Windows Ctrl+A)
+nnoremap <C-A> ggVG
+inoremap <C-A> <Esc>ggVG
+vnoremap <C-A> <Esc>ggVG
+
+" :doc  map ^C to  Copy to System Clipboard (Ctrl+C)
+vnoremap <C-C> "+y
+inoremap <C-C> <Esc>"+y
+nnoremap <C-C> "+Y
+
+
+" :doc  ^p to paste like windows ^V
+" Normal mode: Paste after cursor (like Windows Ctrl+V)
+nnoremap <C-P> "+p
+" Visual mode: Replace selection with clipboard content
+vnoremap <C-P> "_d"+P
+" Insert mode: Paste at cursor position
+inoremap <C-P> <C-R>+
+" Disable default command-line history completion for Ctrl+P
+cnoremap <C-P> <Nop>
+   
+
+
+   
+
+" :doc  Remap ^Z to suspend editor session
+:map <C-Z> :sus<CR>
+
+
+" :doc  -tw  to toggle highlight of trailing whitespace
+
+let g:toggle_extra_whitespace = 0    
+
+function! ToggleExtraWhitespace()           
+  if g:toggle_extra_whitespace
+    highlight clear ExtraWhitespace
+    match none
+    let g:toggle_extra_whitespace = 0
+    echo "ExtraWhitespace highlighting OFF"
+  else
+    highlight ExtraWhitespace ctermbg=red guibg=red
+    match ExtraWhitespace /\s\+$/
+    let g:toggle_extra_whitespace = 1
+    echo "ExtraWhitespace highlighting ON"
+  endif
+endfunction
+
+nnoremap <leader>tw :call ToggleExtraWhitespace()<CR>
+
+
+
+" :doc  -tn  to toggle line numbers shown / not shown
+
+let g:toggle_numbers = 0
+
+function! ToggleLineNumbers()
+  if g:toggle_numbers
+    set nonumber norelativenumber
+    let g:toggle_numbers = 0
+    echo "Line numbers OFF"
+  else
+    set number norelativenumber
+    let g:toggle_numbers = 1
+    echo "Line numbers ON"
+  endif
+endfunction
+
+
+" Map to <leader>tn (e.g., ,tn)
+nnoremap <leader>tn :call ToggleLineNumbers()<CR>
+
+
+
+" 🛣️ Toggle path display in command line with <leader>tp
+"      First press: shows full path
+"      Second press: clears message
+"
+" Requires: let mapleader = "-" to match your pattern (-tp)
+"
+" :doc  -tp  to toggle display path of currently edited file in status area on bottom of screen
+"
+let g:path_shown = 0
+
+function! TogglePath()
+  let filepath = expand('%:p') " Get full path
+  
+  " Copy to system clipboard
+  if system('uname') =~? 'Darwin' " macOS
+    call system('pbcopy', filepath)
+  else " Assume Linux with xclip
+    call system('xclip -selection clipboard', filepath)
+  endif
+  
+  " Toggle display message
+  if g:path_shown
+    echo ""
+    let g:path_shown = 0
+  else
+    echo "📋 Copied to clipboard: " . filepath
+    let g:path_shown = 1
+  endif
+endfunction
+
+nnoremap <leader>tp :call TogglePath()<CR>
+
+
+
+" :doc  -cs  to show a cheat sheet of all custom key bindings defined in this .vimrc
+function! ShowCheatSheet()
+  let output = system('node /etc/nixos/devenv/misc-utils/vimrc-cheatsheet.js')
+  new
+  setlocal buftype=nofile bufhidden=wipe noswapfile
+  call setline(1, split(output, "\n"))
+  setlocal nomodifiable readonly
+endfunction
+
+nnoremap <leader>cs :call ShowCheatSheet()<CR>
+
+
+
+
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+"
+" Programming aids
+
+" :doc Remap F5: Clean up files w/ weird Unicode or non-ASCI chars (e.g., 'smart' quotes)
+map <F5> :%s/[^\x00-\x7F]/ /g
+
+
+" :doc   print newline (Java/Scala) -- Insert mode, zp, then space: System.out.println("");   
+iab zp System.out.println("");
+
+au BufRead,BufNewFile *.scala set filetype=scala
+au! Syntax scala source ~/.vim/syntax/scala.vim
+
+au BufRead,BufNewFile *.scala set filetype=scala
+au! Syntax scala source ~/.vim/syntax/scala.vim
+
+
+
+" :doc remap F7 to "create an <a href='url'>content</a> where url sits below content"
+map <F7> <ESC>0i<a href="<ESC>A"><ESC>JxA</a>
+
+
+" :doc - legacy xml editting settings (2 tabs)
+"
+:au BufRead,BufNewFile *.xfs set filetype=xml
+:autocmd BufRead,BufNewFile *.xfs   set softtabstop=2
+:autocmd BufRead,BufNewFile *.xfs   set sw=2
+
+:autocmd BufRead,BufNewFile *.xsl   set softtabstop=2
+:autocmd BufRead,BufNewFile *.xsl   set sw=2
+
+:autocmd BufRead,BufNewFile *.xml   set softtabstop=2
+:autocmd BufRead,BufNewFile *.xml   set sw=2
+
+:autocmd BufRead,BufNewFile *.xsd   set softtabstop=2
+:autocmd BufRead,BufNewFile *.xsd   set sw=2
+
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+
+
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" gvim (non-terminal/gui) settings only
+"
+set guifont=DejaVu\ Sans\ Mono\ Book\ 10
+"  doc:  zoom in,  zoom back out w/ F2/F3
+"
+map <F2> :echo "Font 7"<CR>:set guifont=DejaVu\ Sans\ Mono\ Book\ 9<CR>
+map <F3> :echo "Font 12"<CR>:set guifont=DejaVu\ Sans\ Mono\ Book\ 12<CR>
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+" Disable the matchparen plugin ntirely ?  this seems to keep it, that's OK. leave alone for now
+let g:loaded_matchparen = 1  " Disable auto-highlighting/jumping
